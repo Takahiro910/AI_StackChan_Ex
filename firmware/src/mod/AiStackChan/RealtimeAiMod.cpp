@@ -17,6 +17,9 @@
 #include "share/Mutex.h"
 #if defined(ENABLE_WAKEWORD)
 #include "driver/WakeWord.h"
+#ifndef WAKEWORD_LISTEN_GRACE_MS
+#define WAKEWORD_LISTEN_GRACE_MS (6000)   // ウェイク後、この時間内に声が来なければ待機へ戻す
+#endif
 #endif
 #if defined(USE_LED_BAR)
 #include "driver/LedBar.h"
@@ -211,6 +214,8 @@ void RealtimeAiMod::idle(void)
   updateHeadTouchExpression();
   updateWakeword();
   updateLedBar();
+  // 録音中/発話中はウェイクワード判定（マイク待ちで自然に休む）が走らず loop() が全速で回るため、少し休ませて CPU 負荷と発熱を抑える
+  vTaskDelay(pdMS_TO_TICKS(5));
 
 #if 0 
   //スケジューラ処理
@@ -280,6 +285,20 @@ void RealtimeAiMod::updateWakeword(void)
 {
 #if defined(ENABLE_WAKEWORD)
   if(!wakewordAvailable) return;
+
+  // ウェイクワードで入った Listening で、一定時間誰も話さなければ空振りとみなして待機に戻す（誤検出時に 30 秒待たされない）
+  if(wakeListenStartMs != 0){
+    if(pRtLLM->isSpeaking() || !pRtLLM->isRealtimeRecording()){
+      wakeListenStartMs = 0;    // 会話が始まった／別の理由で終わった
+    }else if(millis() - wakeListenStartMs > WAKEWORD_LISTEN_GRACE_MS){
+      if((int32_t)(pRtLLM->getLastLoudMs() - wakeListenStartMs) < 0){
+        Serial.println("Wakeword: no speech after wake, back to idle");
+        pRtLLM->stopRealtimeRecord();
+      }
+      wakeListenStartMs = 0;
+    }
+  }
+
   // 会話中（録音中・発話中）はマイクを WebSocket タスクが使うので触らない
   if(pRtLLM->isRealtimeRecording() || pRtLLM->isSpeaking()) return;
 
@@ -309,6 +328,7 @@ void RealtimeAiMod::updateWakeword(void)
 #endif
       sw_tone();
       pRtLLM->startRealtimeRecord();
+      wakeListenStartMs = millis();
     }
   }
 #endif

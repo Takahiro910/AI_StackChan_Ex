@@ -259,8 +259,18 @@ int wakeword_compare()
      return false; 
   }
   static int mfccFrameCount = 0;
+  static uint64_t energyAcc = 0;   // 発話区間の音量（RMS）算出用
+  static uint32_t energyCnt = 0;
   const auto state = vadEngine.process(data);
   const int vadFrameLength = vadEngine.config().frame_length();
+  if (state >= simplevox::VadState::PreDetection)
+  {
+    for (int k = 0; k < vadFrameLength; k += 4) { int32_t v = data[k]; energyAcc += (uint64_t)(v * v); energyCnt++; }
+  }
+  else if (state <= simplevox::VadState::Silence)
+  {
+    energyAcc = 0; energyCnt = 0;
+  }
   const int mfccFrameLength = mfccEngine.config().frame_length();
   const int mfccHopLength = mfccEngine.config().hop_length();
   // Silence以上ならrawBufferにデータを追加
@@ -289,16 +299,22 @@ int wakeword_compare()
       || (state >= simplevox::VadState::Speech && mfccFrameNum <= mfccFrameCount))
   {
     std::unique_ptr<simplevox::MfccFeature> feature(mfccEngine.create(features, mfccFrameCount, mfccCoefNum));
+    const uint32_t rms = energyCnt ? (uint32_t)sqrtf((float)energyAcc / energyCnt) : 0;
+    const bool rmsOk = rms >= WAKEWORD_MIN_RMS;
     
     for(int i=0; i<REGISTER_MAX; i++){
       if(mfcc[i] != nullptr){
         const auto dist = simplevox::calcDTW(*(mfcc[i]), *feature);
-        char cbuf[64];
-        char pass = (dist < DIST_THRESHOLD) ? '!': '?';  // 閾値未満で一致と判定, しきい値は要調整
-        sprintf(cbuf, "Dist #%d: %6lu, %c", i, dist, pass);
-        //M5.Display.drawString(cbuf, 0, 50);
+        const int tmplFrames = mfcc[i]->size();
+        const bool lenOk = (mfccFrameCount * 100 >= tmplFrames * WAKEWORD_LEN_MIN_PCT)
+                        && (mfccFrameCount * 100 <= tmplFrames * WAKEWORD_LEN_MAX_PCT);
+        const bool distOk = dist < DIST_THRESHOLD;
+        char cbuf[96];
+        char pass = (distOk && lenOk && rmsOk) ? '!' : '?';
+        sprintf(cbuf, "Dist #%d: %6lu, %c  (len %d/%d%s, rms %lu%s)", i, dist, pass,
+                mfccFrameCount, tmplFrames, lenOk ? "" : " NG", (unsigned long)rms, rmsOk ? "" : " NG");
         Serial.println(String(cbuf));
-        if(dist < DIST_THRESHOLD){
+        if(distOk && lenOk && rmsOk){
           //ret = true;
           ret = i;
           Serial.printf("Matched #%d wakeword\n", i);
@@ -308,6 +324,7 @@ int wakeword_compare()
     }
     raw_reset();
     mfccFrameCount = 0;
+    energyAcc = 0; energyCnt = 0;
     vadEngine.reset();
     //mode = 0;
 //    M5.Mic.end();

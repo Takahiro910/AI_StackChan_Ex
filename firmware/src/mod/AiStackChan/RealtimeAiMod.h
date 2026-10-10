@@ -33,6 +33,7 @@ private:
     // ウェイクワード（SimpleVox）。BtnA で有効/無効、BtnB 長押しで登録
     bool wakewordEnabled = false;
     bool wakewordAvailable = false;
+    uint32_t wakeListenStartMs = 0;   // ウェイクワードで Listening に入った時刻（0 なら該当なし）
     void updateWakeword(void);
     void updateIdleText(void);
     void updateLedBar(void);

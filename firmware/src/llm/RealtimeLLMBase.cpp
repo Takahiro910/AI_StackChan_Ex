@@ -51,6 +51,7 @@ RealtimeLLMBase::RealtimeLLMBase(llm_param_t param) :
     nextBufIdx(0),
     playClockEndMs(0),
     idleText("Please touch"),
+    lastLoudMs(0),
     outputText(String(""))
 {
 #ifdef REALTIME_API_RECORD_TEST
@@ -91,6 +92,11 @@ void RealtimeLLMBase::webSocketProcess()
         }
         //M5.Mic.end();
         exitMutexAudio();
+        {   // 声が来ているかの目安（8 サンプル間引きの RMS）
+            uint64_t acc = 0; int cnt = 0;
+            for(int k = 0; k < rtRecLength; k += 8){ int32_t v = rtRecBuf[k]; acc += (uint64_t)(v * v); cnt++; }
+            if(cnt > 0 && sqrtf((float)acc / cnt) >= 300.0f){ lastLoudMs = millis(); }
+        }
         String audio_base64;
         audio_base64 = base64::encode((u8*)rtRecBuf, rtRecLength * sizeof(int16_t));
 

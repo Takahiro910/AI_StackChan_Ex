@@ -264,6 +264,9 @@ bool connect_wifi_from_yaml(wifi_s* wifi_info)
   WiFi.disconnect();
   WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_STA);
+  // Wi-Fi のモデムスリープを無効化。有効のままだと、本体が送信しない時間（発話中など）に無線が間欠スリープに入り、
+  // サーバからの小さなパケット（turnComplete 等）が取りこぼされて TCP 再送待ち（20 秒前後、回数を重ねると伸びる）になる。
+  WiFi.setSleep(false);
   WiFi.begin(wifi_info->ssid.c_str(), wifi_info->password.c_str());
   return Wifi_connection_check();
 }

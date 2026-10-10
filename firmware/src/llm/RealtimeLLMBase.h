@@ -66,6 +66,8 @@ public:   //本当はprivateにしたいところだがコールバック関数�
     uint32_t playClockEndMs;
 
     String idleText;         // 待機中の吹き出し（既定 "Please touch"。ウェイクワード有効時に差し替える）
+    uint32_t lastLoudMs;     // 録音チャンクの RMS が閾値を超えた最後の時刻（ウェイクワード空振りの判定用）
+    uint32_t getLastLoudMs() { return lastLoudMs; }
 
 public:
     RealtimeLLMBase(llm_param_t param);
