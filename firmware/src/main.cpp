@@ -24,6 +24,9 @@
 #include "mod/EspNowRemote/EspNowRemoteMod.h"
 
 #include "driver/PlayMP3.h"   //lipSync
+#if defined(USE_LED_BAR)
+#include "driver/LedBar.h"
+#endif
 #include "driver/TapDetect.h"
 
 #include <HTTPClient.h>
@@ -704,6 +707,9 @@ void setup()
   }
 
   avatar.addTask(lipSync, "lipSync", 2048, 2);
+#if defined(USE_LED_BAR)
+  LedBar::begin();
+#endif
   avatar.addTask(servo, "servo", 2048);
   avatar.addTask(battery_check, "battery_check", 2048);
   avatar.setSpeechFont(&fonts::efontJA_16);

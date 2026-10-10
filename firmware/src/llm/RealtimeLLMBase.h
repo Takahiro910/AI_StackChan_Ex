@@ -58,6 +58,15 @@ public:   //本当はprivateにしたいところだがコールバック関数�
     uint8_t* audioBuf[audioBufNum];
     int nextBufIdx;          // 次回データを格納するバッファ面
 
+    // 再生中チャンクの音量推定（口パク・LED バー用）。チャンクを積んだ時刻から再生位置を推定し、20ms ブロックごとの RMS を返す
+    static const int levelBlockSamples = 480;   // 24kHz × 20ms
+    static const int levelBlockMax = audioBufSize / 2 / levelBlockSamples;
+    struct ChunkLevel { uint32_t startMs; uint32_t endMs; uint16_t nBlocks; uint16_t rms[levelBlockMax]; };
+    ChunkLevel chunkLevel[audioBufNum];
+    uint32_t playClockEndMs;
+
+    String idleText;         // 待機中の吹き出し（既定 "Please touch"。ウェイクワード有効時に差し替える）
+
 public:
     RealtimeLLMBase(llm_param_t param);
 
@@ -78,6 +87,11 @@ public:
     int base64_decode(const char* input, int size, char* output);
     void hexdump(const void *mem, uint32_t len, uint8_t cols = 16);
     void streamAudioDelta(String& delta);
+    void streamAudioDelta(const char* base64, int base64Size);
+    // JSON を全解析せずに、afterToken の後ろにある key の文字列値（base64）をその場で再生する。見つからなければ false
+    bool streamBase64FieldInPlace(char* payload, size_t length, const char* afterToken, const char* key);
+    static const char* findSub(const char* hay, size_t n, const char* needle);
+    void setIdleText(const String& text) { idleText = text; }
 
     // for TTS
     //

@@ -14,6 +14,13 @@
 #include "MySchedule.h"
 #include "share/SDUtil.h"
 #include "driver/HeadTouchSensor.h"
+#include "share/Mutex.h"
+#if defined(ENABLE_WAKEWORD)
+#include "driver/WakeWord.h"
+#endif
+#if defined(USE_LED_BAR)
+#include "driver/LedBar.h"
+#endif
 
 using namespace m5avatar;
 
@@ -37,6 +44,20 @@ RealtimeAiMod::RealtimeAiMod(bool _isOffline)
 
   pRtLLM = (RealtimeLLMBase*)robot->llm;
   pRtLLM->invokeWebSocketLoopTask();
+
+#if defined(ENABLE_WAKEWORD)
+  if(robot->m_config.getExConfig().wakeword.type == WAKEWORD_TYPE_SIMPLEVOX){
+    wakeword_init();
+    wakewordAvailable = true;
+    if(wakeword_count() > 0){
+      // 登録済みなら起動時から有効（ハンズフリー）
+      mode = 1;
+      wakewordEnabled = true;
+    }
+    Serial.printf("Wakeword: %d registered, enabled=%d\n", wakeword_count(), wakewordEnabled);
+  }
+#endif
+  updateIdleText();
 
   //servo_home = false;
 
@@ -74,12 +95,50 @@ void RealtimeAiMod::btnA_pressed(void)
   Serial.println("Btn A pressed");
   sw_tone();
   toggleRealtimeRecord();
+#else
+#if defined(ENABLE_WAKEWORD)
+  // ウェイクワードの有効/無効を切り替え
+  if(!wakewordAvailable) return;
+  if(wakeword_count() == 0){
+    avatar.setSpeechText("ウェイクワード未登録(B長押し)");
+    delay(1500);
+    updateIdleText();
+    return;
+  }
+  wakewordEnabled = !wakewordEnabled;
+  mode = wakewordEnabled ? 1 : 0;
+  avatar.setSpeechText(wakewordEnabled ? "ウェイクワード有効" : "ウェイクワード無効");
+  delay(1000);
+  updateIdleText();
+#endif
 #endif
 }
 
 void RealtimeAiMod::btnB_longPressed(void)
 {
-
+#if defined(ENABLE_WAKEWORD)
+  // ウェイクワード登録開始。会話中は受け付けない
+  if(!wakewordAvailable || pRtLLM->isRealtimeRecording() || pRtLLM->isSpeaking()) return;
+  if(wakeword_count() >= REGISTER_MAX){
+    avatar.setSpeechText("登録数が上限です");
+    delay(1000);
+    updateIdleText();
+    return;
+  }
+  enterMutexAudio();
+  M5.Mic.end();
+  M5.Speaker.begin();
+  M5.Speaker.tone(1000, 100);
+  delay(500);
+  M5.Speaker.tone(600, 100);
+  delay(1000);
+  M5.Speaker.end();
+  M5.Mic.begin();
+  exitMutexAudio();
+  wakewordEnabled = false;
+  mode = -1;
+  avatar.setSpeechText("ウェイクワード登録: 話して");
+#endif
 }
 
 void RealtimeAiMod::btnC_pressed(void)
@@ -150,6 +209,8 @@ void RealtimeAiMod::idle(void)
   // Alarm (Function Calling)
   alarmEventHandler();
   updateHeadTouchExpression();
+  updateWakeword();
+  updateLedBar();
 
 #if 0 
   //スケジューラ処理
@@ -204,6 +265,75 @@ void RealtimeAiMod::updateHeadTouchExpression(void)
     headTouchHappyActive = false;
     avatar.setExpression(Expression::Neutral);
   }
+}
+
+void RealtimeAiMod::updateIdleText(void)
+{
+#if defined(ENABLE_WAKEWORD)
+  pRtLLM->setIdleText(wakewordEnabled ? String("呼んでね / Touch") : String("Please touch"));
+#else
+  pRtLLM->setIdleText(String("Please touch"));
+#endif
+}
+
+void RealtimeAiMod::updateWakeword(void)
+{
+#if defined(ENABLE_WAKEWORD)
+  if(!wakewordAvailable) return;
+  // 会話中（録音中・発話中）はマイクを WebSocket タスクが使うので触らない
+  if(pRtLLM->isRealtimeRecording() || pRtLLM->isSpeaking()) return;
+
+  if(mode < 0){
+    // 登録モード: 一声録って MFCC を保存（録った声を再生して確認）。マイク/スピーカーを使うので音声ミューテックス下で
+    enterMutexAudio();
+    int idx = wakeword_regist();
+    exitMutexAudio();
+    if(idx >= 0){
+      avatar.setSpeechText((String("ウェイクワード#") + String(idx) + String(" 登録完了")).c_str());
+      delay(1500);
+      mode = 1;
+      wakewordEnabled = true;
+      updateIdleText();
+    }
+  }
+  else if(mode > 0 && wakewordEnabled){
+    // WebSocket タスクが録音/再生のためにマイクを切り替える瞬間と重ならないよう、音声ミューテックスを「待たずに」取る。
+    // 取れなければ今回はスキップ（1 フレーム 30ms 程度なので検出への影響は小さい）
+    if(xSemaphoreTake(mutexAudio, 0) != pdTRUE) return;
+    int idx = wakeword_compare();
+    xSemaphoreGive(mutexAudio);
+    if(idx >= 0){
+      Serial.printf("Wakeword #%d detected\n", idx);
+#if defined(USE_LED_BAR)
+      LedBar::flashWake();
+#endif
+      sw_tone();
+      pRtLLM->startRealtimeRecord();
+    }
+  }
+#endif
+}
+
+void RealtimeAiMod::updateLedBar(void)
+{
+#if defined(USE_LED_BAR)
+  // 描画タスクが止まっていないか監視（FastLED.show() が固まると最後の色で点灯し続ける）
+  static uint32_t lastFrames = 0, lastCheckMs = 0;
+  uint32_t nowMs = millis();
+  if(nowMs - lastCheckMs > 2000){
+    uint32_t f = LedBar::frames();
+    if(f == lastFrames){ Serial.printf("[LedBar] task stalled? frames=%lu\n", (unsigned long)f); }
+    lastFrames = f; lastCheckMs = nowMs;
+  }
+  if(pRtLLM->isSpeaking()){
+    LedBar::setMode(LedBar::Speaking);
+    LedBar::setLevel(pRtLLM->getAudioLevel());
+  }else if(pRtLLM->isRealtimeRecording()){
+    LedBar::setMode(LedBar::Listening);
+  }else{
+    LedBar::setMode(LedBar::Off);
+  }
+#endif
 }
 
 bool RealtimeAiMod::isBusy(void)

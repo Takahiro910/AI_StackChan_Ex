@@ -107,6 +107,32 @@ static const char input_text[] =
 // WebSocketのコールバック関数としてクラスメソッドを渡せないので、コールバック関数を
 // 通常の関数にして静的変数を経由してクラスのthisポインタを渡す。
 static GeminiLive* p_this;
+
+#ifndef REALTIME_API_WITH_TTS
+// 音声チャンク（serverContent.modelTurn.parts[0].inlineData.data）だけのメッセージは 40KB 前後の JSON を
+// ArduinoJson で全解析すると数十 ms かかる。base64 を文字列検索で切り出してそのまま再生する高速パス。
+// toolCall / turnComplete / interrupted を含むメッセージは従来どおり全解析に回す。
+static bool fastPathInlineAudio(uint8_t* payload, size_t length)
+{
+    const char* s = (const char*)payload;
+    if(RealtimeLLMBase::findSub(s, length, "\"inlineData\"") == nullptr) return false;
+    if(RealtimeLLMBase::findSub(s, length, "\"toolCall\"") != nullptr) return false;
+    if(RealtimeLLMBase::findSub(s, length, "\"turnComplete\"") != nullptr) return false;
+    if(RealtimeLLMBase::findSub(s, length, "\"interrupted\"") != nullptr) return false;
+
+    if(p_this->speaking == false){
+        Serial.printf("[WSc] input audio committed (fast path)\n");
+        // speaking を先に立てる: stopRealtimeRecord() の直後に「録音中でも発話中でもない」瞬間ができると、
+        // メインループのウェイクワード判定がマイクを掴みに来て M5Unified 内部で競合する
+        p_this->speaking = true;
+        p_this->stopRealtimeRecord();
+        enterMutexAudio();
+        M5.Mic.end();
+        M5.Speaker.begin();
+    }
+    return p_this->streamBase64FieldInPlace((char*)payload, length, "\"inlineData\"", "\"data\"");
+}
+#endif
 static void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
     String msgType, delta;
     DeserializationError error;
@@ -213,6 +239,9 @@ static void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 		case WStype_BIN:
 			Serial.printf("[WSc] get binary length: %u\n", length);
 			//p_this->hexdump(payload, length);
+#ifndef REALTIME_API_WITH_TTS
+            if(fastPathInlineAudio(payload, length)) break;
+#endif
             //Serial.printf("[WSc] get binary: %s\n", payload);
 
             error = deserializeJson(p_this->msgDoc, payload);
@@ -241,12 +270,12 @@ static void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
             else if(!p_this->msgDoc["serverContent"]["modelTurn"]["parts"][0]["inlineData"]["data"].isNull()){
                 if(p_this->speaking == false){
                     Serial.printf("[WSc] input audio committed\n");
+                    p_this->speaking = true;      // 先に立てる（ウェイクワード判定との競合防止）
                     p_this->stopRealtimeRecord();
 #ifndef REALTIME_API_WITH_TTS
                     enterMutexAudio();
                     M5.Mic.end();
                     M5.Speaker.begin();
-                    p_this->speaking = true;
 #else
                     p_this->speaking = true;
 #endif
@@ -294,16 +323,19 @@ static void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
                 Serial.printf("[WSc] turnComplete: %s\n", payload);
 
 #ifndef REALTIME_API_WITH_TTS
-                while (M5.Speaker.isPlaying()) { vTaskDelay(1); }
-                M5.Speaker.end();
-                M5.Mic.begin();
-                exitMutexAudio();
-                p_this->startRealtimeRecord();
-
-                for(int i=0; i<p_this->audioBufNum; i++){
-                    memset(p_this->audioBuf[i], 0, p_this->audioBufSize);
+                // 音声を伴わないターン（表情ツールだけ呼んで終わる等）ではミューテックスを取っていないので返さない。
+                // 他タスク（ウェイクワード判定）が保持中に give すると FreeRTOS の assert で再起動する
+                if(p_this->speaking){
+                    while (M5.Speaker.isPlaying()) { vTaskDelay(1); }
+                    M5.Speaker.end();
+                    M5.Mic.begin();
+                    for(int i=0; i<p_this->audioBufNum; i++){
+                        memset(p_this->audioBuf[i], 0, p_this->audioBufSize);
+                    }
+                    p_this->speaking = false;
+                    exitMutexAudio();
                 }
-                p_this->speaking = false;
+                p_this->startRealtimeRecord();
 #else
                 p_this->response_done = true;
 #endif

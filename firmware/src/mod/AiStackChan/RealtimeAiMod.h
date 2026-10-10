@@ -30,6 +30,13 @@ private:
     bool headTouchHappyActive = false;
     void updateHeadTouchExpression(void);
 
+    // ウェイクワード（SimpleVox）。BtnA で有効/無効、BtnB 長押しで登録
+    bool wakewordEnabled = false;
+    bool wakewordAvailable = false;
+    void updateWakeword(void);
+    void updateIdleText(void);
+    void updateLedBar(void);
+
 public:
     RealtimeAiMod(bool _isOffline);
 

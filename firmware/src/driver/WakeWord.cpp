@@ -104,7 +104,7 @@ void feature_init(const simplevox::MfccConfig& mfccConfig, const simplevox::VadC
   const int maxLength = maxTimeMs * mfccConfig.sample_rate / 1000;
   mfccFrameNum = (maxLength - (mfccConfig.frame_length() - mfccConfig.hop_length())) / mfccConfig.hop_length();
   mfccCoefNum = mfccConfig.coef_num;
-  features = (float*)heap_caps_malloc(sizeof(*features) * mfccFrameNum * mfccCoefNum, MALLOC_CAP_8BIT);
+  features = (float*)heap_caps_malloc(sizeof(*features) * mfccFrameNum * mfccCoefNum, (CONFIG_SPIRAM) ? (MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM) : MALLOC_CAP_8BIT);   // 約16KB。Realtime モードは内蔵 RAM が逼迫するので PSRAM へ
 
   // VADのHangbeforeおよびPreDetectionに相当するデータサイズを算出
   const int vadBeforeLength = 
@@ -314,6 +314,13 @@ int wakeword_compare()
     //if(dist < DIST_THRESHOLD) ret = true;
   }    
   return ret;
+}
+
+int wakeword_count()
+{
+  int n = 0;
+  for(int i=0; i<REGISTER_MAX; i++){ if(mfcc[i] != nullptr) n++; }
+  return n;
 }
 
 void delete_mfcc(int idx)

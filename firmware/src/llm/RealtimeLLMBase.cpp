@@ -15,6 +15,7 @@
 #include "Robot.h"
 
 #include <base64.h>
+#include <math.h>
 #include "libb64/cdecode.h"
 #include <WebSocketsClient.h>
 
@@ -48,6 +49,8 @@ RealtimeLLMBase::RealtimeLLMBase(llm_param_t param) :
     response_done(false),
     startTime(0),
     nextBufIdx(0),
+    playClockEndMs(0),
+    idleText("Please touch"),
     outputText(String(""))
 {
 #ifdef REALTIME_API_RECORD_TEST
@@ -63,6 +66,7 @@ RealtimeLLMBase::RealtimeLLMBase(llm_param_t param) :
     audioBuf[i] = (uint8_t*)heap_caps_malloc(audioBufSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     memset(audioBuf[i], 0, audioBufSize);
   }
+  memset(chunkLevel, 0, sizeof(chunkLevel));
 #endif
 
 }
@@ -119,7 +123,7 @@ void RealtimeLLMBase::webSocketProcess()
             delay(1);
         }
         else{
-            avatar.setSpeechText("Please touch");
+            avatar.setSpeechText(idleText.c_str());
             delay(10);
         }
     }
@@ -127,7 +131,18 @@ void RealtimeLLMBase::webSocketProcess()
 
 int RealtimeLLMBase::getAudioLevel()
 {
-    return abs(*audioBuf[(nextBufIdx + audioBufNum - 1) % audioBufNum]) * 50;
+    if(!speaking) return 0;
+    const uint32_t now = millis();
+    for(int i = 0; i < audioBufNum; i++){
+        const ChunkLevel& c = chunkLevel[i];
+        if(c.nBlocks == 0) continue;
+        if((int32_t)(now - c.startMs) < 0 || (int32_t)(c.endMs - now) <= 0) continue;
+        int block = (now - c.startMs) / 20;
+        if(block >= c.nBlocks) block = c.nBlocks - 1;
+        int level = c.rms[block] * 3;      // 会話音声の RMS は 1000〜5000 程度。15000 で口全開
+        return level > 15000 ? 15000 : level;
+    }
+    return 0;
 }
 
 void RealtimeLLMBase::startRealtimeRecord()
@@ -217,18 +232,76 @@ void RealtimeLLMBase::hexdump(const void *mem, uint32_t len, uint8_t cols) {
 
 void RealtimeLLMBase::streamAudioDelta(String& delta)
 {
-    int base64Size = delta.length();
+    streamAudioDelta(delta.c_str(), delta.length());
+}
+
+const char* RealtimeLLMBase::findSub(const char* hay, size_t n, const char* needle)
+{
+    size_t m = strlen(needle);
+    if(m == 0 || n < m) return nullptr;
+    for(size_t i = 0; i + m <= n; i++){
+        if(hay[i] == needle[0] && memcmp(hay + i, needle, m) == 0) return hay + i;
+    }
+    return nullptr;
+}
+
+bool RealtimeLLMBase::streamBase64FieldInPlace(char* payload, size_t length, const char* afterToken, const char* key)
+{
+    const char* end = payload + length;
+    const char* p = findSub(payload, length, afterToken);
+    if(p == nullptr) return false;
+    p = findSub(p, end - p, key);
+    if(p == nullptr) return false;
+    p += strlen(key);
+    while(p < end && (*p == ' ' || *p == ':' || *p == '\n' || *p == '\r' || *p == '\t')) p++;
+    if(p >= end || *p != '"') return false;
+    char* start = (char*)p + 1;
+    char* close = (char*)memchr(start, '"', end - start);
+    if(close == nullptr) return false;
+    *close = 0;                      // base64_decode が strlen を使うので一時的に終端する
+    streamAudioDelta(start, close - start);
+    *close = '"';
+    return true;
+}
+
+void RealtimeLLMBase::streamAudioDelta(const char* base64, int base64Size)
+{
     if((base64Size / 4) * 3 + 3 > audioBufSize){
         Serial.printf("audio chunk too large (%d byte base64), skipped\n", base64Size);
         return;
     }
     uint8_t* buf = audioBuf[nextBufIdx];
-    int len = base64_decode(delta.c_str(), base64Size, (char*)buf);
+    int len = base64_decode(base64, base64Size, (char*)buf);
+
+    // 20ms ブロックごとの RMS を先に計算しておく（再生位置の推定に使う）
+    ChunkLevel& cl = chunkLevel[nextBufIdx];
+    const int16_t* pcm = (const int16_t*)buf;
+    const int nSamples = len / 2;
+    int nBlocks = (nSamples + levelBlockSamples - 1) / levelBlockSamples;
+    if(nBlocks > levelBlockMax) nBlocks = levelBlockMax;
+    for(int b = 0; b < nBlocks; b++){
+        const int s0 = b * levelBlockSamples;
+        int s1 = s0 + levelBlockSamples; if(s1 > nSamples) s1 = nSamples;
+        uint64_t acc = 0;
+        for(int s = s0; s < s1; s += 4){ int32_t v = pcm[s]; acc += (uint64_t)(v * v); }   // 4 サンプル間引き
+        int cnt = (s1 - s0 + 3) / 4;
+        cl.rms[b] = (uint16_t)sqrtf((float)acc / (cnt > 0 ? cnt : 1));
+    }
     //Serial.printf("audio pcm16 size: %d byte\n", len);
 
     // 旧実装は isPlaying() が false になるまで待ってから playRaw() していたため、チャンク境界ごとに数 ms の無音が入り
     // 「ブツ切れ」に聞こえた。playRaw() は次スロットが空くまで自分でブロックするので、待たずに積めば途切れなく連結される。
     M5.Speaker.playRaw((int16_t*)buf, len/2, 24000, false, 1, 0, false);   // channel は 0 固定。-1(自動) だと再生中は別チャンネルが選ばれて同時再生になりキューに積まれない
+
+    // playRaw() から戻った時点で「前のチャンクの再生終了＝このチャンクの再生開始」なので、時計を進めて再生区間を記録
+    const uint32_t now = millis();
+    const uint32_t durationMs = (uint32_t)nSamples * 1000 / 24000;
+    uint32_t start = ((int32_t)(playClockEndMs - now) > 0) ? playClockEndMs : now;
+    cl.startMs = start;
+    cl.endMs = start + durationMs;
+    cl.nBlocks = nBlocks;
+    playClockEndMs = cl.endMs;
+
     nextBufIdx = (nextBufIdx + 1) % audioBufNum;
 }
 

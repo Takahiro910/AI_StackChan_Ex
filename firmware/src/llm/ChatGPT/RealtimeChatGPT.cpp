@@ -173,6 +173,14 @@ static void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 		case WStype_TEXT:
 			//Serial.printf("[WSc] get text: %s\n", payload);
 			Serial.printf("[WSc] text size: %d\n", strlen((char*)payload));
+#ifndef REALTIME_API_WITH_TTS
+            // 音声チャンク (response.output_audio.delta) は JSON 全解析を省いて base64 を直接再生する
+            if(p_this->speaking
+               && RealtimeLLMBase::findSub((const char*)payload, length, "\"response.output_audio.delta\"") != nullptr
+               && p_this->streamBase64FieldInPlace((char*)payload, length, "\"response.output_audio.delta\"", "\"delta\"")){
+                break;
+            }
+#endif
 
             error = deserializeJson(p_this->msgDoc, payload);
             if (error) {
@@ -191,12 +199,12 @@ static void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
             }
             else if(msgType.equals("input_audio_buffer.committed")){
                 Serial.printf("[WSc] input audio committed\n");
+                p_this->speaking = true;      // 先に立てる（ウェイクワード判定との競合防止）
                 p_this->stopRealtimeRecord();
 #ifndef REALTIME_API_WITH_TTS
                 enterMutexAudio();
                 M5.Mic.end();
                 M5.Speaker.begin();
-                p_this->speaking = true;
 #else
                 p_this->speaking = true;
 #endif
@@ -255,16 +263,17 @@ static void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 
                 if(!isFuncCall){
 #ifndef REALTIME_API_WITH_TTS
-                    while (M5.Speaker.isPlaying()) { vTaskDelay(1); }
-                    M5.Speaker.end();
-                    M5.Mic.begin();
-                    exitMutexAudio();
-                    p_this->startRealtimeRecord();
-
-                    for(int i=0; i<p_this->audioBufNum; i++){
-                        memset(p_this->audioBuf[i], 0, p_this->audioBufSize);
+                    if(p_this->speaking){      // 取っていないミューテックスは返さない（他タスク保持中の give は assert で再起動）
+                        while (M5.Speaker.isPlaying()) { vTaskDelay(1); }
+                        M5.Speaker.end();
+                        M5.Mic.begin();
+                        for(int i=0; i<p_this->audioBufNum; i++){
+                            memset(p_this->audioBuf[i], 0, p_this->audioBufSize);
+                        }
+                        p_this->speaking = false;
+                        exitMutexAudio();
                     }
-                    p_this->speaking = false;
+                    p_this->startRealtimeRecord();
 #else
                     p_this->response_done = true;
 #endif
