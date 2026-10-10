@@ -50,8 +50,13 @@ public:   //本当はprivateにしたいところだがコールバック関数�
 
     // for play
     //
-    uint8_t* audioBuf[2];    // Base64をデコードして得た音声データを格納するバッファ。再生直後に更新すると音が切れたのでダブルバッファとした
-    int nextBufIdx;          // 次回データを格納するダブルバッファの面（0 or 1）
+    // Base64をデコードして得た音声データを格納するリングバッファ（PSRAM）。
+    // M5Unified の Speaker は 1 チャンネルあたり「再生中＋次」の 2 スロットを持ち、playRaw() は次スロットが埋まっていると空くまでブロックする。
+    // そのため待ち合わせなしで playRaw() を呼び続けても、同時に参照されるバッファは最大 2 面。4 面あれば書き込み面が再生中になることはない。
+    static const int audioBufNum  = 4;
+    static const int audioBufSize = 120 * 1024;
+    uint8_t* audioBuf[audioBufNum];
+    int nextBufIdx;          // 次回データを格納するバッファ面
 
 public:
     RealtimeLLMBase(llm_param_t param);

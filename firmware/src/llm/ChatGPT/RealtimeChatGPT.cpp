@@ -21,12 +21,22 @@
 using namespace m5avatar;
 extern Avatar avatar;
 
+// 既定モデル／声。SC_ExConfig.yaml の llm.model / llm.voice で上書きできる。
+#ifndef REALTIME_OPENAI_DEFAULT_MODEL
+#define REALTIME_OPENAI_DEFAULT_MODEL "gpt-realtime-2.1"
+#endif
+#ifndef REALTIME_OPENAI_DEFAULT_VOICE
+#define REALTIME_OPENAI_DEFAULT_VOICE "marin"
+#endif
+// OpenAI Realtime の audio/pcm は 24kHz 固定。マイクも同じレートで録る（RealtimeLLMBase の既定 16kHz のままだと音声が 1.5 倍速で届く）。
+#define REALTIME_OPENAI_MIC_SAMPLE_RATE 24000
+
 static const char session_update[] =
       "{"
         "\"type\": \"session.update\","
         "\"session\": {"
           "\"type\": \"realtime\","
-          "\"model\": \"gpt-realtime\","
+          "\"model\": \"" REALTIME_OPENAI_DEFAULT_MODEL "\","
 #ifdef REALTIME_API_WITH_TTS
           "\"output_modalities\": [\"text\"],"
 #else
@@ -48,7 +58,7 @@ static const char session_update[] =
                 "\"rate\": 24000"
               "},"
               //"\"voice\": \"sage\""
-              "\"voice\": \"marin\""
+              "\"voice\": \"" REALTIME_OPENAI_DEFAULT_VOICE "\""
             "}"
           "},"
           "\"instructions\": \"You are an AI robot named Stack-chan. Please speak in Japanese.\","
@@ -112,6 +122,14 @@ static void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
                 sessionUpdateDoc["session"]["instructions"] = p_this->role + " "
                                                               + p_this->systemRole + " "
                                                               + p_this->userInfo;
+
+                // YAML (llm.model / llm.voice) による上書き
+                if(p_this->param.llm_conf.model.length() > 0){
+                    sessionUpdateDoc["session"]["model"] = p_this->param.llm_conf.model;
+                }
+                if(p_this->param.llm_conf.voice.length() > 0){
+                    sessionUpdateDoc["session"]["audio"]["output"]["voice"] = p_this->param.llm_conf.voice;
+                }
 
                 // MCP tools listをfunctionとして挿入
                 //
@@ -243,8 +261,8 @@ static void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
                     exitMutexAudio();
                     p_this->startRealtimeRecord();
 
-                    for(int i=0; i<2; i++){
-                        memset(p_this->audioBuf[i], 0, 100 * 1024);
+                    for(int i=0; i<p_this->audioBufNum; i++){
+                        memset(p_this->audioBuf[i], 0, p_this->audioBufSize);
                     }
                     p_this->speaking = false;
 #else
@@ -303,8 +321,13 @@ RealtimeChatGPT::RealtimeChatGPT(llm_param_t param)
 
   // WebSocket connect
   //
+  rtRecSamplerate = REALTIME_OPENAI_MIC_SAMPLE_RATE;
+
   avatar.setSpeechText("Connecting...");
-  webSocket.beginSslWithCA("api.openai.com", 443, "/v1/realtime?model=gpt-realtime", root_ca_openai);
+  String model = param.llm_conf.model.length() > 0 ? param.llm_conf.model : String(REALTIME_OPENAI_DEFAULT_MODEL);
+  String path = "/v1/realtime?model=" + model;
+  Serial.printf("OpenAI Realtime model: %s\n", model.c_str());
+  webSocket.beginSslWithCA("api.openai.com", 443, path.c_str(), root_ca_openai);
 
   // event handler
   p_this = this;    //コールバック関数に静的変数経由でthisポインタを渡す

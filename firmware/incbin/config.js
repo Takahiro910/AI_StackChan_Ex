@@ -19,6 +19,8 @@ document.addEventListener('DOMContentLoaded', function () {
     wifiPassword: document.getElementById('wifiPassword'),
     aiService: document.getElementById('aiService'),
     enableMemory: document.getElementById('enableMemory'),
+    aiModel: document.getElementById('aiModel'),
+    aiVoice: document.getElementById('aiVoice'),
     aiApiKey: document.getElementById('aiApiKey'),
     servoType: document.getElementById('servoType'),
     takaoBase: document.getElementById('takaoBase'),
@@ -228,6 +230,8 @@ document.addEventListener('DOMContentLoaded', function () {
     fields.aiApiKey.value = apikey.aiservice || '';
     fields.aiService.value = String(llm.type === 3 ? 3 : 0);
     setBoolSelect(fields.enableMemory, !!llm.enableMemory);
+    fields.aiModel.value = llm.model || '';
+    fields.aiVoice.value = llm.voice || '';
     const mcpServers = Array.isArray(llm.mcpServers) ? llm.mcpServers : [];
     mcpFields.forEach(function (mcp, index) {
       const server = mcpServers[index] || {};
@@ -329,6 +333,8 @@ document.addEventListener('DOMContentLoaded', function () {
         llm: {
           type: Number(fields.aiService.value),
           enableMemory: boolSelectValue(fields.enableMemory),
+          model: fields.aiModel.value.trim(),
+          voice: fields.aiVoice.value.trim(),
           mcpServers: mcpServers
         }
       }

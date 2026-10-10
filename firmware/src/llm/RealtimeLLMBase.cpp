@@ -58,10 +58,10 @@ RealtimeLLMBase::RealtimeLLMBase(llm_param_t param) :
 #endif
 
 #ifndef REALTIME_API_WITH_TTS
-  // ストリーミング音声再生用のダブルバッファを初期化
-  for(int i=0; i<2; i++){
-    audioBuf[i] = (uint8_t*)malloc(100 * 1024);
-    memset(audioBuf[i], 0, 100 * 1024);
+  // ストリーミング音声再生用のリングバッファを PSRAM に確保
+  for(int i=0; i<audioBufNum; i++){
+    audioBuf[i] = (uint8_t*)heap_caps_malloc(audioBufSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    memset(audioBuf[i], 0, audioBufSize);
   }
 #endif
 
@@ -127,7 +127,7 @@ void RealtimeLLMBase::webSocketProcess()
 
 int RealtimeLLMBase::getAudioLevel()
 {
-    return abs(*audioBuf[nextBufIdx ^ 1]) * 50;
+    return abs(*audioBuf[(nextBufIdx + audioBufNum - 1) % audioBufNum]) * 50;
 }
 
 void RealtimeLLMBase::startRealtimeRecord()
@@ -218,24 +218,30 @@ void RealtimeLLMBase::hexdump(const void *mem, uint32_t len, uint8_t cols) {
 void RealtimeLLMBase::streamAudioDelta(String& delta)
 {
     int base64Size = delta.length();
-    Serial.printf("audio base64 size: %d byte\n", base64Size);
+    if((base64Size / 4) * 3 + 3 > audioBufSize){
+        Serial.printf("audio chunk too large (%d byte base64), skipped\n", base64Size);
+        return;
+    }
     uint8_t* buf = audioBuf[nextBufIdx];
     int len = base64_decode(delta.c_str(), base64Size, (char*)buf);
-    Serial.printf("audio pcm16 size: %d byte\n", len);
+    //Serial.printf("audio pcm16 size: %d byte\n", len);
 
-    while (M5.Speaker.isPlaying()) { vTaskDelay(1); }
-    M5.Speaker.playRaw((int16_t*)buf, len/2, 24000, false);
-    nextBufIdx ^= 1;  //ダブルバッファを切り替え
+    // 旧実装は isPlaying() が false になるまで待ってから playRaw() していたため、チャンク境界ごとに数 ms の無音が入り
+    // 「ブツ切れ」に聞こえた。playRaw() は次スロットが空くまで自分でブロックするので、待たずに積めば途切れなく連結される。
+    M5.Speaker.playRaw((int16_t*)buf, len/2, 24000, false, 1, 0, false);   // channel は 0 固定。-1(自動) だと再生中は別チャンネルが選ばれて同時再生になりキューに積まれない
+    nextBufIdx = (nextBufIdx + 1) % audioBufNum;
 }
 
 void RealtimeLLMBase::invokeWebSocketLoopTask(void)
 {
-    xTaskCreate(webSocketLoopTask, /* Function to implement the task */
+    // スピーカータスク(APP_CPU)と同じコアで重い JSON 解析を走らせると再生が途切れるため、PRO_CPU 側に固定する
+    xTaskCreatePinnedToCore(webSocketLoopTask, /* Function to implement the task */
             "webSocketLoopTask", /* Name of the task */
             6*1024,               /* Stack size in words */
             this,                 /* Task input parameter */
             3,                    /* Priority of the task */
-            &webSocketLoopTask_h);                /* Task handle. */
+            &webSocketLoopTask_h, /* Task handle. */
+            PRO_CPU_NUM);
 }
 
 void RealtimeLLMBase::suspendWebSocketLoopTask(void)

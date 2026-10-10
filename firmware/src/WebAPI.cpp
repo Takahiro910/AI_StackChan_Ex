@@ -241,6 +241,12 @@ String build_extend_yaml(JsonObjectConst ex)
   String yaml;
   yaml += "llm:\n";
   yaml += "  type: " + String(json_int_or(llm["type"], LLM_TYPE_CHATGPT)) + "\n";
+  if(llm["model"].as<String>().length() > 0 && llm["model"].as<String>() != "null"){
+    yaml += "  model: " + quote_yaml_string(llm["model"].as<String>()) + "\n";
+  }
+  if(llm["voice"].as<String>().length() > 0 && llm["voice"].as<String>() != "null"){
+    yaml += "  voice: " + quote_yaml_string(llm["voice"].as<String>()) + "\n";
+  }
   yaml += "  enableMemory: ";
   yaml += json_bool_or(llm["enableMemory"], false) ? "true\n" : "false\n";
   JsonArrayConst servers = llm["mcpServers"].as<JsonArrayConst>();
@@ -483,6 +489,8 @@ void handle_config_get() {
   if(parse_yaml_file(SPIFFS, SPIFFS_EX_CONFIG_PATH, ex_doc)){
     llm["type"] = ex_doc["llm"]["type"] | LLM_TYPE_CHATGPT;
     llm["enableMemory"] = ex_doc["llm"]["enableMemory"] | false;
+    llm["model"] = ex_doc["llm"]["model"] | "";   // 欠損キーは空文字（as<String>() だと "null" になる）
+    llm["voice"] = ex_doc["llm"]["voice"] | "";
     JsonArrayConst stored_servers = ex_doc["llm"]["mcpServers"].as<JsonArrayConst>();
     int count = 0;
     for(JsonObjectConst stored_server : stored_servers){

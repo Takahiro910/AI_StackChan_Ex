@@ -240,6 +240,40 @@
             </select>
           </div>
           <div class="field">
+            <label for="aiModel">Model (blank = default)</label>
+            <input id="aiModel" type="text" autocomplete="off"
+                   placeholder="gpt-realtime-2.1-mini / gemini-3.8-live">
+          </div>
+          <div class="field">
+            <label for="aiVoice">Voice (blank = default)</label>
+            <input id="aiVoice" type="text" autocomplete="off" list="aiVoiceList"
+                   placeholder="marin, cedar / Leda, Aoede, Kore">
+            <datalist id="aiVoiceList">
+              <option value="Leda">Gemini: Leda (youthful)</option>
+              <option value="Aoede">Gemini: Aoede (breezy)</option>
+              <option value="Kore">Gemini: Kore (firm)</option>
+              <option value="Puck">Gemini: Puck (upbeat)</option>
+              <option value="Zephyr">Gemini: Zephyr (bright)</option>
+              <option value="Achird">Gemini: Achird (friendly)</option>
+              <option value="Sulafat">Gemini: Sulafat (warm)</option>
+              <option value="Laomedeia">Gemini: Laomedeia (upbeat)</option>
+              <option value="Sadachbia">Gemini: Sadachbia (lively)</option>
+              <option value="Vindemiatrix">Gemini: Vindemiatrix (gentle)</option>
+              <option value="Charon">Gemini: Charon (informative)</option>
+              <option value="Fenrir">Gemini: Fenrir (excitable)</option>
+              <option value="marin">OpenAI: marin (recommended)</option>
+              <option value="cedar">OpenAI: cedar (recommended)</option>
+              <option value="alloy">OpenAI: alloy</option>
+              <option value="ash">OpenAI: ash</option>
+              <option value="ballad">OpenAI: ballad</option>
+              <option value="coral">OpenAI: coral</option>
+              <option value="echo">OpenAI: echo</option>
+              <option value="sage">OpenAI: sage</option>
+              <option value="shimmer">OpenAI: shimmer</option>
+              <option value="verse">OpenAI: verse</option>
+            </datalist>
+          </div>
+          <div class="field">
             <label for="enableMemory">Enable Memory</label>
             <select id="enableMemory">
               <option value="false">false</option>

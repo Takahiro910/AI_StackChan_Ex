@@ -2,6 +2,9 @@
 # AI機能 (LLM, TTS, STT, Wakeword)
 llm:
   type: 0                            # 0:ChatGPT  1:ModuleLLM  2:ModuleLLM(Function Calling)  3:Gemini(Realtime)  4:OpenAI Compatible HTTP Endpoint
+  voice: ""                          # Realtime API の声。OpenAI Realtime: marin / cedar / alloy / ash / ballad / coral / echo / sage / shimmer / verse。Gemini Live: Leda / Aoede / Kore / Puck / Zephyr など。空欄なら既定 (marin / Leda)。
+  #model: "gpt-realtime-2.1-mini"    # 例: Realtime (type 0) のモデル。空欄なら gpt-realtime-2.1
+  #model: "gemini-3.8-live"          # 例: Gemini Live (type 3) のモデル。空欄なら gemini-3.8-live
   model: ""                          # ChatGPT(type 0): 空欄なら gpt-4o、指定すればそのモデル名で上書き。OpenAI互換エンドポイント(type 4): 指定必須(空欄ならリクエストは拒否されます)。
   #model: "gpt-5.5-2026-04-23"       # 例: ChatGPT(type 0) で gpt-4o 以外を使う場合
   #model: "Gemma-4-31B-it"           # 例: OpenAI互換エンドポイント(type 4) のモデル名

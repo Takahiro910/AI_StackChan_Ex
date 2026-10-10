@@ -241,8 +241,8 @@ bool Wifi_connection_check() {
     M5.Display.print(".");
     Serial.print(".");
     delay(1000);
-    // 5秒以上接続できなかったら抜ける
-    if ( 5000 < (millis() - start_millis) ) {
+    // 20秒以上接続できなかったら抜ける（上流は5秒。WPA2 接続 + DHCP で 5 秒を超えるルーターがあり、起動のたびに失敗画面に落ちるため延長）
+    if ( 20000 < (millis() - start_millis) ) {
       //break;
       return false;
     }
@@ -515,9 +515,16 @@ void init_mic_spk()
     // to reconfigure the audio device immediately before playback.
     spk_cfg.sample_rate = 22050;
 #else
-    spk_cfg.sample_rate = 64000; // default:64000 (64kHz)  e.g. 48000 , 50000 , 80000 , 96000 , 100000 , 128000 , 144000 , 192000 , 200000
+    // Realtime API の応答音声は 24kHz。48kHz なら整数倍で再サンプリングが素直になり、64kHz より DMA 負荷も軽い。
+    spk_cfg.sample_rate = 48000; // 上流の既定は 64000
 #endif
     spk_cfg.task_pinned_core = APP_CPU_NUM;
+    // ストリーミング再生の途切れ（プチプチ）対策:
+    //  - スピーカータスクの優先度を WebSocket タスク(3) や描画タスクより上げ、40KB の JSON 解析中に DMA が枯れないようにする
+    //  - DMA バッファを 8×256 → 8×512 フレームに増やし、48kHz で約 85ms 分の余裕を持たせる（内蔵 RAM 消費 +8KB 程度）
+    spk_cfg.task_priority = 5;
+    spk_cfg.dma_buf_len = 512;
+    spk_cfg.dma_buf_count = 8;
 
 #if defined(USE_AUDIO_MODULE)
     spk_cfg.pin_data_out = SYS_I2S_DOUT_PIN;

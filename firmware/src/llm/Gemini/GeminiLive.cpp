@@ -21,11 +21,32 @@
 using namespace m5avatar;
 extern Avatar avatar;
 
+// 既定モデル／声。SC_ExConfig.yaml の llm.model / llm.voice で上書きできる。
+// gemini-2.5-flash-native-audio-preview-12-2025 (旧既定) はプレビュー世代。2026-09-15 GA の gemini-3.8-live を既定にする。
+#ifndef GEMINI_LIVE_DEFAULT_MODEL
+#define GEMINI_LIVE_DEFAULT_MODEL "gemini-3.8-live"
+#endif
+#ifndef GEMINI_LIVE_DEFAULT_VOICE
+#define GEMINI_LIVE_DEFAULT_VOICE "Leda"
+#endif
+
 static const char session_update[] =
         "{"
           "\"setup\": {"
-            "\"model\": \"models/gemini-2.5-flash-native-audio-preview-12-2025\","
+            "\"model\": \"models/" GEMINI_LIVE_DEFAULT_MODEL "\","
+            "\"realtimeInputConfig\": {"
+              "\"automaticActivityDetection\": {"
+                "\"prefixPaddingMs\": 300,"         // 発話頭の切れ防止
+                "\"silenceDurationMs\": 600"        // 発話終了とみなす無音 (既定 ~800ms)。短いほど応答が速いが文中の間で切れやすい
+              "}"
+            "},"
             "\"generationConfig\": {"
+#ifdef GEMINI_LIVE_AFFECTIVE_DIALOG
+              "\"enableAffectiveDialog\": true,"      // 話者の感情・口調に応じて応答の表現を変える。setup 直下ではなく generationConfig 配下（v1beta）
+#endif
+              "\"speechConfig\": {"
+                "\"voiceConfig\": {\"prebuiltVoiceConfig\": {\"voiceName\": \"" GEMINI_LIVE_DEFAULT_VOICE "\"}}"
+              "},"
 #ifndef REALTIME_API_WITH_TTS
               "\"responseModalities\": [\"AUDIO\"]"
 #else
@@ -50,7 +71,7 @@ static const char input_audio_append[] =
           "\"realtimeInput\": {"
             "\"audio\":{"
               "\"data\": \"REPLACE_TO_AUDIO_BASE64\","
-              "\"mime_type\": \"audio/pcm\""
+              "\"mime_type\": \"audio/pcm;rate=16000\""
             "}"
           "}"
         "}";
@@ -103,8 +124,8 @@ static void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
         exitMutexAudio();
         p_this->startRealtimeRecord();
 
-        for(int i=0; i<2; i++){
-            memset(p_this->audioBuf[i], 0, 100 * 1024);
+        for(int i=0; i<p_this->audioBufNum; i++){
+            memset(p_this->audioBuf[i], 0, p_this->audioBufSize);
         }
         p_this->speaking = false;
       }
@@ -131,6 +152,18 @@ static void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
                 sessionUpdateDoc["setup"]["systemInstruction"]["parts"][0]["text"] = p_this->role;
                 sessionUpdateDoc["setup"]["systemInstruction"]["parts"][1]["text"] = p_this->systemRole;
                 sessionUpdateDoc["setup"]["systemInstruction"]["parts"][2]["text"] = p_this->userInfo;
+
+                // YAML (llm.model / llm.voice) による上書き
+                if(p_this->param.llm_conf.model.length() > 0){
+                    String model = p_this->param.llm_conf.model;
+                    if(!model.startsWith("models/")){
+                        model = "models/" + model;
+                    }
+                    sessionUpdateDoc["setup"]["model"] = model;
+                }
+                if(p_this->param.llm_conf.voice.length() > 0){
+                    sessionUpdateDoc["setup"]["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] = p_this->param.llm_conf.voice;
+                }
 
                 // MCP tools listをfunctionとして挿入
                 //
@@ -267,8 +300,8 @@ static void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
                 exitMutexAudio();
                 p_this->startRealtimeRecord();
 
-                for(int i=0; i<2; i++){
-                    memset(p_this->audioBuf[i], 0, 100 * 1024);
+                for(int i=0; i<p_this->audioBufNum; i++){
+                    memset(p_this->audioBuf[i], 0, p_this->audioBufSize);
                 }
                 p_this->speaking = false;
 #else

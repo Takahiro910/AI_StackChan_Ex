@@ -279,6 +279,10 @@ void StackchanExConfig::setExtendSettings(DynamicJsonDocument doc)
 {
     _ex_parameters.llm.type         = doc["llm"]["type"].as<int>();
     _ex_parameters.llm.model        = doc["llm"]["model"].as<String>();
+    _ex_parameters.llm.voice        = doc["llm"]["voice"].as<String>();
+    // ArduinoJson は欠損キーを as<String>() で文字列 "null" にするため、空扱いに正規化する
+    if(_ex_parameters.llm.model == "null"){ _ex_parameters.llm.model = ""; }
+    if(_ex_parameters.llm.voice == "null"){ _ex_parameters.llm.voice = ""; }
     int nMcpServers = doc["llm"]["mcpServers"].size();
     _ex_parameters.llm.nMcpServers = nMcpServers < LLM_N_MCP_SERVERS_MAX
                                     ? nMcpServers
