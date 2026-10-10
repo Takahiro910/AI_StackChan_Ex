@@ -94,6 +94,9 @@ public:
     bool streamBase64FieldInPlace(char* payload, size_t length, const char* afterToken, const char* key);
     static const char* findSub(const char* hay, size_t n, const char* needle);
     void setIdleText(const String& text) { idleText = text; }
+    // 声を変えてセッションを張り直す（声は setup 時に固定されるため）。再接続はライブラリが自動で行う
+    void changeVoice(const String& voice);
+    String getVoice() { return param.llm_conf.voice; }
 
     // for TTS
     //

@@ -3,6 +3,7 @@
 #include <SD.h>
 #include <SPIFFS.h>
 #include "WebAPI.h"
+#include <Preferences.h>
 #include "Avatar.h"
 #include "StackchanExConfig.h"
 #include "llm/ChatGPT/ChatGPT.h"
@@ -558,6 +559,10 @@ void handle_config_post() {
   if(!write_text_file_atomic(SPIFFS, SPIFFS_EX_CONFIG_PATH, ex_yaml, &error)){
     server.send(500, "text/plain", error.length() > 0 ? error : String("Failed to save SC_ExConfig.yaml"));
     return;
+  }
+  {   // Web UI の設定を正とするため、本体ボタンで選んだ声（NVS）は破棄
+    Preferences prefs;
+    if(prefs.begin("stackchan", false)){ prefs.remove("voice"); prefs.end(); }
   }
 
   server.send(200, "application/json", String("{\"status\":\"ok\"}"));

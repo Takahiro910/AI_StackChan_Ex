@@ -24,6 +24,11 @@
 #if defined(USE_LED_BAR)
 #include "driver/LedBar.h"
 #endif
+#include <Preferences.h>
+
+// 本体ボタンで選べる声の一覧（Web UI の候補リストと同じ）
+static const char* const kGeminiVoices[] = { "Leda", "Aoede", "Kore", "Puck", "Zephyr", "Achird", "Sulafat", "Laomedeia", "Sadachbia", "Vindemiatrix", "Charon", "Fenrir" };
+static const char* const kOpenAIVoices[] = { "marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse" };
 
 using namespace m5avatar;
 
@@ -117,11 +122,67 @@ void RealtimeAiMod::btnA_pressed(void)
 #endif
 }
 
+const char* const* RealtimeAiMod::voiceList(int& count)
+{
+  if(robot->m_config.getExConfig().llm.type == LLM_TYPE_GEMINI){
+    count = sizeof(kGeminiVoices) / sizeof(kGeminiVoices[0]);
+    return kGeminiVoices;
+  }
+  count = sizeof(kOpenAIVoices) / sizeof(kOpenAIVoices[0]);
+  return kOpenAIVoices;
+}
+
+int RealtimeAiMod::currentVoiceIndex()
+{
+  int n; const char* const* list = voiceList(n);
+  String cur = pRtLLM->getVoice();
+  if(cur.length() == 0) return 0;   // 空欄＝既定（リスト先頭: Leda / marin）
+  for(int i = 0; i < n; i++){ if(cur.equalsIgnoreCase(list[i])) return i; }
+  return 0;
+}
+
+// BtnB 短押し: 次の声を仮選択して吹き出しに表示。2.5 秒操作がなければ updateVoicePicker() が確定する
+void RealtimeAiMod::btnB_pressed(void)
+{
+  int n; const char* const* list = voiceList(n);
+  int idx = (voicePendingIdx >= 0) ? voicePendingIdx : currentVoiceIndex();
+  idx = (idx + 1) % n;
+  voicePendingIdx = idx;
+  voicePendingSinceMs = millis();
+  String text = String("Voice: ") + list[idx] + " (" + String(idx + 1) + "/" + String(n) + ")";
+  pRtLLM->setIdleText(text);
+  avatar.setSpeechText(text.c_str());
+}
+
+void RealtimeAiMod::updateVoicePicker(void)
+{
+  if(voicePendingIdx < 0) return;
+  if(!voiceApplyWaiting){
+    if(millis() - voicePendingSinceMs < 2500) return;   // まだ選択中
+    voiceApplyWaiting = true;
+  }
+  // 会話中なら終わるまで待つ（セッションを張り直すため）
+  if(pRtLLM->isSpeaking()) return;
+  int n; const char* const* list = voiceList(n);
+  String voice = list[voicePendingIdx];
+  voicePendingIdx = -1;
+  voiceApplyWaiting = false;
+  {
+    Preferences prefs;
+    if(prefs.begin("stackchan", false)){ prefs.putString("voice", voice); prefs.end(); }
+  }
+  pRtLLM->setIdleText(String("Voice: ") + voice + " ...");
+  pRtLLM->changeVoice(voice);     // 再接続。setupComplete 後に吹き出しが待機表示へ戻る
+  updateIdleText();
+}
+
 void RealtimeAiMod::btnB_longPressed(void)
 {
+  // 長押しは「押した瞬間」に短押しも発火するので、仮選択した声を取り消す
+  voicePendingIdx = -1; voiceApplyWaiting = false; updateIdleText();
 #if defined(ENABLE_WAKEWORD)
-  // ウェイクワード登録開始。会話中は受け付けない
-  if(!wakewordAvailable || pRtLLM->isRealtimeRecording() || pRtLLM->isSpeaking()) return;
+  // ウェイクワード登録開始。会話中・既に登録モードなら受け付けない（pressedFor は押している間ずっと true になる）
+  if(!wakewordAvailable || mode < 0 || pRtLLM->isRealtimeRecording() || pRtLLM->isSpeaking()) return;
   if(wakeword_count() >= REGISTER_MAX){
     avatar.setSpeechText("登録数が上限です");
     delay(1000);
@@ -213,6 +274,7 @@ void RealtimeAiMod::idle(void)
   alarmEventHandler();
   updateHeadTouchExpression();
   updateWakeword();
+  updateVoicePicker();
   updateLedBar();
   // 録音中/発話中はウェイクワード判定（マイク待ちで自然に休む）が走らず loop() が全速で回るため、少し休ませて CPU 負荷と発熱を抑える
   vTaskDelay(pdMS_TO_TICKS(5));

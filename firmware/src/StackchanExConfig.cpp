@@ -1,5 +1,6 @@
 #include "StackchanExConfig.h"
 #include "share/SDUtil.h"
+#include <Preferences.h>
 
 StackchanExConfig::StackchanExConfig() {};
 StackchanExConfig::~StackchanExConfig() {};
@@ -283,6 +284,17 @@ void StackchanExConfig::setExtendSettings(DynamicJsonDocument doc)
     // ArduinoJson は欠損キーを as<String>() で文字列 "null" にするため、空扱いに正規化する
     if(_ex_parameters.llm.model == "null"){ _ex_parameters.llm.model = ""; }
     if(_ex_parameters.llm.voice == "null"){ _ex_parameters.llm.voice = ""; }
+    {   // 本体のボタン操作で選んだ声（NVS）があれば YAML より優先する。Web UI で保存すると NVS 側は消える
+        Preferences prefs;
+        if(prefs.begin("stackchan", true)){
+            String v = prefs.getString("voice", "");
+            prefs.end();
+            if(v.length() > 0){
+                Serial.printf("llm.voice overridden by NVS: %s\n", v.c_str());
+                _ex_parameters.llm.voice = v;
+            }
+        }
+    }
     int nMcpServers = doc["llm"]["mcpServers"].size();
     _ex_parameters.llm.nMcpServers = nMcpServers < LLM_N_MCP_SERVERS_MAX
                                     ? nMcpServers

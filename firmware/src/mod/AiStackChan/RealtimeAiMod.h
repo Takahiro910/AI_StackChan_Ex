@@ -34,6 +34,15 @@ private:
     bool wakewordEnabled = false;
     bool wakewordAvailable = false;
     uint32_t wakeListenStartMs = 0;   // ウェイクワードで Listening に入った時刻（0 なら該当なし）
+
+    // 声の切り替え（BtnB 短押しで次の声、2.5 秒操作がなければ確定→セッション再接続→NVS に保存）
+    int voicePendingIdx = -1;
+    uint32_t voicePendingSinceMs = 0;
+    bool voiceApplyWaiting = false;
+    const char* const* voiceList(int& count);
+    int currentVoiceIndex();
+    void updateVoicePicker(void);
+    void btnB_pressed(void);
     void updateWakeword(void);
     void updateIdleText(void);
     void updateLedBar(void);

@@ -311,6 +311,14 @@ void RealtimeLLMBase::streamAudioDelta(const char* base64, int base64Size)
     nextBufIdx = (nextBufIdx + 1) % audioBufNum;
 }
 
+void RealtimeLLMBase::changeVoice(const String& voice)
+{
+    param.llm_conf.voice = voice;
+    Serial.printf("Voice changed to %s, reconnecting session\n", voice.c_str());
+    stopRealtimeRecord();
+    webSocket.disconnect();      // loop() 内で setReconnectInterval 後に再接続され、CONNECTED で setup/session.update が再送される
+}
+
 void RealtimeLLMBase::invokeWebSocketLoopTask(void)
 {
     // スピーカータスク(APP_CPU)と同じコアで重い JSON 解析を走らせると再生が途切れるため、PRO_CPU 側に固定する
